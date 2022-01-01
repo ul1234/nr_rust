@@ -120,7 +120,6 @@ impl Default for PucchConfigR {
 impl fmt::Display for PucchConfigR {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let json_pretty = serde_json::to_string_pretty(self).expect("cannot serialize pucch_config");
-        // println!("{}", pucch_config_json);
         write!(f, "{}", json_pretty)
     }
 }

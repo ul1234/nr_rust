@@ -2,6 +2,7 @@ use core::{fmt, panic};
 use std::cell::RefCell;
 use serde_derive::{Serialize, Deserialize};
 use crate::err::Error;
+use crate::constants::*;
 use crate::rrc_pucch::*;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,7 +46,6 @@ struct PucchFormatConfig {
 impl fmt::Display for PucchConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let json_pretty = serde_json::to_string_pretty(self).expect("cannot serialize pucch_config");
-        // println!("{}", pucch_config_json);
         write!(f, "{}", json_pretty)
     }
 }
@@ -91,14 +91,14 @@ impl From<PucchConfigR> for PucchConfig {
         let pucch_format4: PucchFormatConfig = c.pucch_format4.into();
 
         let mut pucch_resource = Vec::new();
-        for (i, resource) in c.pucch_resource.unwrap().iter().enumerate() {
+        for resource in &c.pucch_resource.unwrap() {
             pucch_resource.push(
                 PucchResource {
                     id: resource.id,
                     start_prb: resource.start_prb,
                     intra_slot_freq_hopping: resource.intra_slot_freq_hopping,
                     format: resource.format,
-                    max_hold_bits: RefCell::new(0),   // here??
+                    max_hold_bits: RefCell::new(0),
                 }
             );
         }
@@ -112,7 +112,7 @@ impl From<PucchConfigR> for PucchConfig {
             pucch_format4,
         };
 
-        for pucch_resource in pucch_config.pucch_resource.iter() {
+        for pucch_resource in &pucch_config.pucch_resource {
             *pucch_resource.max_hold_bits.borrow_mut() = pucch_config.max_hold_bits(pucch_resource);
         }
 
@@ -133,13 +133,41 @@ impl PucchConfig {
         }
     }
 
-    // // 38.211, Table 6.4.1.3.3.2-1, DMRS for PUCCH format 3 and 4
-    // fn pucch_dmrs_pos(&self, pucch_resource: &PucchResource) -> <&[u32] {
-    //     if let pucch_resource.format {
+    fn pucch_num_dmrs_sym(&self, pucch_resource: &PucchResource) -> u32 {
+        self.pucch_dmrs_pos(pucch_resource).len() as u32
+    }
 
-    //     }
-    // }
+    // 38.211, Table 6.4.1.3.3.2-1, DMRS for PUCCH format 3 and 4
+    fn pucch_dmrs_pos(&self, pucch_resource: &PucchResource) -> &[u32] {
+        let num_sym = match &pucch_resource.format {
+            PucchFormat::PucchFormat3{num_rb: _, num_sym, ..} => *num_sym,
+            PucchFormat::PucchFormat4{num_sym, ..} => *num_sym,
+            _ => panic!("impossible to be here!"),
+        };
+
+        if num_sym == 4 {
+            match pucch_resource.intra_slot_freq_hopping {
+                IntraSlotFreqHopping::Hopping{..} => &[0, 2],
+                IntraSlotFreqHopping::NoHopping => &[1],
+            }
+        }
+        else {
+            const START_SYM: u32 = 5;
+            const NUM_TABLE: usize = (NUM_SYM_PER_SLOT - START_SYM + 1) as usize;
+            let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
+            let index: usize = (num_sym - START_SYM) as usize;
+            if pucch_format_config.addition_dmrs {
+                const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[1, 3, 6, 8], &[1, 3, 6, 9], &[1, 4, 7, 10], &[1, 4, 7, 11], &[1, 5, 8, 12]];
+                PUCCH_DMRS_POS_TABLE[index]
+            }
+            else {
+                const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[2, 7], &[2, 7], &[2, 8], &[2, 9], &[3, 10]];
+                PUCCH_DMRS_POS_TABLE[index]
+            }
+        }
+    }
     
+    // 38.213, 9.2.5.2
     fn max_hold_bits(&self, pucch_resource: &PucchResource) -> u32 {
         match &pucch_resource.format {
             PucchFormat::PucchFormat0{..} => 2,
@@ -148,20 +176,20 @@ impl PucchConfig {
                 let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
                 let num_bits = match &pucch_resource.format {
                     PucchFormat::PucchFormat2{num_rb, num_sym, ..} => {
-                        let data_sc = 12 - 4;
-                        let qm = 2;
+                        let data_sc = NUM_SC_PER_RB - 4;
+                        let qm = QPSK_BITS;
                         pucch_format_config.max_coderate_x100 * (*num_rb) * data_sc * (*num_sym) * qm
                     },
                     PucchFormat::PucchFormat3{num_rb, num_sym, ..} => {
-                        let data_sc = 12;
-                        let num_data_sym = *num_sym;    // here???
-                        let qm = if pucch_format_config.pi2_bpsk {1} else {2};
+                        let data_sc = NUM_SC_PER_RB;
+                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
+                        let qm = if pucch_format_config.pi2_bpsk {BPSK_BITS} else {QPSK_BITS};
                         pucch_format_config.max_coderate_x100 * (*num_rb) * data_sc * num_data_sym * qm
                     },
-                    PucchFormat::PucchFormat4{num_sym, ..} => {
-                        let data_sc = 12; // here???
-                        let num_data_sym = *num_sym;// here???
-                        let qm = if pucch_format_config.pi2_bpsk {1} else {2};
+                    PucchFormat::PucchFormat4{num_sym, occ_len,..} => {
+                        let data_sc = NUM_SC_PER_RB / *occ_len;
+                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
+                        let qm = if pucch_format_config.pi2_bpsk {BPSK_BITS} else {QPSK_BITS};
                         pucch_format_config.max_coderate_x100 * data_sc * num_data_sym * qm
                     },
                     _ => panic!("impossible to be here!"),
@@ -170,6 +198,15 @@ impl PucchConfig {
                 num_bits / 100
             }
         }
+    }
+
+    // 38.213, 9.2.1
+    fn pucch_resource_set_for_uci(&self, o_uci: u32) -> &PucchResourceSet {
+        unimplemented!()
+    }
+
+    fn pucch_resource_for_uci(&self, o_uci: u32, pucch_resource_idx: u32, dci_first_cce: u32, num_cce: u32) -> &PucchResource {
+        unimplemented!()
     }
 }
 
