@@ -28,20 +28,14 @@ pub struct PucchConfigR {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PucchResourceSetR {
-    pub id: PucchResourceSetId,
-    pub pucch_resource_id: Vec<PucchResourceId>,
+    pub pucch_resource_set_id: u32,
+    pub pucch_resource_id: Vec<u32>,        // pucch resourc id
     pub max_payload_minus_1: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub struct PucchResourceSetId(u32);
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub struct PucchResourceId(u32);
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PucchResourceR {
-    pub id: PucchResourceId,
+    pub pucch_resource_id: u32,
     pub start_prb: u32,
     pub intra_slot_freq_hopping: IntraSlotFreqHopping,
     pub format: PucchFormat,
@@ -90,20 +84,20 @@ impl Default for PucchConfigR {
         PucchConfigR {
             pucch_resource_set: Some(
                 vec![PucchResourceSetR {
-                    id: PucchResourceSetId(0),
-                    pucch_resource_id: vec![PucchResourceId(0), PucchResourceId(1)],
+                    pucch_resource_set_id: 0,
+                    pucch_resource_id: vec![0, 1],
                     max_payload_minus_1: None}
                     ]
             ),
             pucch_resource: Some(
                 vec![PucchResourceR {
-                    id: PucchResourceId(0),
+                    pucch_resource_id: 0,
                     start_prb: 0,
                     intra_slot_freq_hopping: IntraSlotFreqHopping::NoHopping,
                     format: PucchFormat::PucchFormat0 { init_cyclic_shift: 0, num_sym: 2, start_sym: 0},
                 },
                 PucchResourceR {
-                    id: PucchResourceId(1),
+                    pucch_resource_id: 1,
                     start_prb: 0,
                     intra_slot_freq_hopping: IntraSlotFreqHopping::Hopping {second_prb: 20},
                     format: PucchFormat::PucchFormat1 { init_cyclic_shift: 2, num_sym: 2, start_sym: 3, time_occ: 1},

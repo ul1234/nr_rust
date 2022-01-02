@@ -1,7 +1,7 @@
 {
   "pucch_resource_set": [
     {
-      "id": 0,
+      "pucch_resource_set_id": 0,
       "pucch_resource_id": [
         0,
         1
@@ -9,7 +9,7 @@
       "max_payload_minus_1": null
     },
     {
-      "id": 1,
+      "pucch_resource_set_id": 1,
       "pucch_resource_id": [
         2,
         3
@@ -19,7 +19,7 @@
   ],
   "pucch_resource": [
     {
-      "id": 0,
+      "pucch_resource_id": 0,
       "start_prb": 0,
       "intra_slot_freq_hopping": "NoHopping",
       "format": {
@@ -31,7 +31,7 @@
       }
     },
     {
-      "id": 1,
+      "pucch_resource_id": 1,
       "start_prb": 0,
       "intra_slot_freq_hopping": {
         "Hopping": {
@@ -48,7 +48,7 @@
       }
     },
     {
-      "id": 2,
+      "pucch_resource_id": 2,
       "start_prb": 0,
       "intra_slot_freq_hopping": {
         "Hopping": {
@@ -62,37 +62,49 @@
           "start_sym": 4
         }
       }
+    },
+    {
+      "pucch_resource_id": 3,
+      "start_prb": 10,
+      "intra_slot_freq_hopping": {
+        "Hopping": {
+          "second_prb": 40
+        }
+      },
+      "format": {
+        "PucchFormat3": {
+          "num_rb": 10,
+          "num_sym": 6,
+          "start_sym": 6
+        }
+      }
     }
   ],
   "pucch_format1": {
     "inter_slot_freq_hopping": false,
     "addition_dmrs": false,
-    "max_coderate": 0.1,
-    "num_slots": 0,
+    "max_coderate": 0.45,
     "pi2_bpsk": true,
     "simul_harq_csi": true
   },
   "pucch_format2": {
     "inter_slot_freq_hopping": false,
     "addition_dmrs": false,
-    "max_coderate": 0.1,
-    "num_slots": 0,
+    "max_coderate": 0.6,
     "pi2_bpsk": true,
     "simul_harq_csi": true
   },
   "pucch_format3": {
     "inter_slot_freq_hopping": false,
     "addition_dmrs": false,
-    "max_coderate": 0.1,
-    "num_slots": 0,
+    "max_coderate": 0.6,
     "pi2_bpsk": true,
     "simul_harq_csi": true
   },
   "pucch_format4": {
     "inter_slot_freq_hopping": false,
     "addition_dmrs": false,
-    "max_coderate": 0.1,
-    "num_slots": 0,
+    "max_coderate": 0.8,
     "pi2_bpsk": true,
     "simul_harq_csi": true
   }
