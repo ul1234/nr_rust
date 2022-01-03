@@ -152,6 +152,7 @@ impl PucchConfig {
     // 38.211, Table 6.4.1.3.3.2-1, DMRS for PUCCH format 3 and 4
     fn pucch_dmrs_pos(&self, pucch_resource: &PucchResource) -> &[u32] {
         let num_sym = match &pucch_resource.format {
+            #[rustfmt::skip]
             PucchFormat::PucchFormat3{num_rb: _, num_sym, ..} => *num_sym,
             PucchFormat::PucchFormat4{num_sym, ..} => *num_sym,
             _ => panic!("impossible to be here!"),
@@ -169,16 +170,19 @@ impl PucchConfig {
             let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
             let index: usize = (num_sym - START_SYM) as usize;
             if pucch_format_config.addition_dmrs {
+                #[rustfmt::skip] 
                 const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[1, 3, 6, 8], &[1, 3, 6, 9], &[1, 4, 7, 10], &[1, 4, 7, 11], &[1, 5, 8, 12]];
                 PUCCH_DMRS_POS_TABLE[index]
             }
             else {
+                #[rustfmt::skip] 
                 const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[2, 7], &[2, 7], &[2, 8], &[2, 9], &[3, 10]];
                 PUCCH_DMRS_POS_TABLE[index]
             }
         }
     }
 
+    #[rustfmt::skip]
     // 38.213, 9.2.5.2
     fn max_hold_bits(&self, pucch_resource: &PucchResource) -> u32 {
         match &pucch_resource.format {
@@ -258,6 +262,7 @@ impl PucchConfig {
 }
 
 impl PucchResource {
+    #[rustfmt::skip] 
     // (start_sym, num_sym)
     fn occupied_sym(&self) -> (u32, u32) {
         match self.format {
@@ -317,7 +322,7 @@ impl PucchChannelType {
 
 impl PucchLogicChannel {
     fn is_overlap(pucch_channels: &[PucchLogicChannel]) -> bool {
-        pucch_channels.iter().fold(0, |bitmap, channel| )
+        //pucch_channels.iter().fold(0, |bitmap, channel| )
         unimplemented!()
     }
 }

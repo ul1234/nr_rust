@@ -50,6 +50,7 @@ pub enum IntraSlotFreqHopping {
     NoHopping,
 }
 
+#[rustfmt::skip]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum PucchFormat {
     PucchFormat0 { init_cyclic_shift: u32, num_sym: u32, start_sym: u32},
