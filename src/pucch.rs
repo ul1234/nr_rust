@@ -129,11 +129,10 @@ impl From<PucchConfigR> for PucchConfig {
 /*************** impl config time ***************************/
 
 impl PucchConfig {
-    fn pucch_resource_index(pucch_resource: &[PucchResource], pucch_resource_id: u32) -> usize {
-        let (index, _resource) = pucch_resource.iter().enumerate()
-            .find(|(_i, resource)| resource.pucch_resource_id == pucch_resource_id)
-            .unwrap_or_else(|| panic!("pucch resource id {} not found!", pucch_resource_id));
-        index
+    fn pucch_resource_index(pucch_resource: &[PucchResource], resource_id: u32) -> usize {
+        pucch_resource.iter().position(|resource| 
+            resource.pucch_resource_id == resource_id)
+            .unwrap_or_else(|| panic!("pucch resource id {} not found!", resource_id))
     }
 
     fn pucch_format_config(&self, pucch_resource: &PucchResource) -> Option<&PucchFormatConfig> {
@@ -192,19 +191,19 @@ impl PucchConfig {
                         let data_sc = NUM_SC_PER_RB - 4;
                         let qm = QPSK_BITS;
                         pucch_format_config.max_coderate_x100 * (*num_rb) * data_sc * (*num_sym) * qm
-                    },
+                    }
                     PucchFormat::PucchFormat3{num_rb, num_sym, ..} => {
                         let data_sc = NUM_SC_PER_RB;
                         let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
                         let qm = if pucch_format_config.pi2_bpsk {BPSK_BITS} else {QPSK_BITS};
                         pucch_format_config.max_coderate_x100 * (*num_rb) * data_sc * num_data_sym * qm
-                    },
+                    }
                     PucchFormat::PucchFormat4{num_sym, occ_len,..} => {
                         let data_sc = NUM_SC_PER_RB / *occ_len;
                         let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
                         let qm = if pucch_format_config.pi2_bpsk {BPSK_BITS} else {QPSK_BITS};
                         pucch_format_config.max_coderate_x100 * data_sc * num_data_sym * qm
-                    },
+                    }
                     _ => panic!("impossible to be here!"),
                 };
 
@@ -216,6 +215,11 @@ impl PucchConfig {
 
 /******************** impl runtime **********************/
 impl PucchConfig {
+    fn pucch_resource(&self, resource_id: u32) -> &PucchResource {
+        self.pucch_resource.iter().find(|resource| 
+            resource.pucch_resource_id == resource_id).unwrap_or_else(|| panic!("pucch resource id {} not found!", resource_id))
+    }
+
     // 38.213, 9.2.1
     fn pucch_resource_set_for_uci(&self, o_uci: u32) -> &PucchResourceSet {
         self.pucch_resource_set.iter().find(|set| o_uci <= set.max_payload_minus_1).unwrap()
@@ -241,10 +245,10 @@ impl PucchConfig {
                 else {
                     pucch_resource_indicator
                 }
-            },
+            }
             1..=3 => {
                 pucch_resource_indicator
-            },
+            }
             _ => panic!("impossible to be here!"),
         };
 
@@ -253,3 +257,71 @@ impl PucchConfig {
     }
 }
 
+impl PucchResource {
+    // (start_sym, num_sym)
+    fn occupied_sym(&self) -> (u32, u32) {
+        match self.format {
+            PucchFormat::PucchFormat0{init_cyclic_shift: _, num_sym, start_sym} => (start_sym, num_sym),
+            PucchFormat::PucchFormat1{init_cyclic_shift: _, num_sym, start_sym, ..} => (start_sym, num_sym),
+            PucchFormat::PucchFormat2{num_rb: _, num_sym, start_sym} => (start_sym, num_sym),
+            PucchFormat::PucchFormat3{num_rb: _, num_sym, start_sym} => (start_sym, num_sym),
+            PucchFormat::PucchFormat4{num_sym, occ_len: _, occ_idx: _, start_sym} => (start_sym, num_sym),
+        }
+    }
+
+    fn is_overlap(&self, pucch_resource: &PucchResource) -> bool {
+        let (start_sym, num_sym) = self.occupied_sym();
+        let end_sym = start_sym + num_sym;
+        let (start_sym_2, num_sym_2) = pucch_resource.occupied_sym();
+        let end_sym_2 = start_sym_2 + num_sym_2;
+
+        (start_sym <= end_sym_2) && (end_sym >= start_sym_2)
+    }
+}
+
+struct PucchLogicChannel {
+    channel_type: PucchChannelType,
+    pucch_resource_id: u32,
+}
+
+#[derive(Debug, PartialEq)]
+enum PucchChannelType {
+    DCI_HARQ,
+    SPS_HARQ,
+    SR,
+    CSI,
+    CSI_MULTI,
+    HARQ_SR_MULTI,
+    HARQ_CSI_MULTI,
+    CSI_SR_MULTI,
+    HARQ_CSI_SR_MULTI,
+}
+
+impl PucchChannelType {
+    fn has_harq(&self) -> bool {
+        [PucchChannelType::DCI_HARQ, PucchChannelType::SPS_HARQ, PucchChannelType::HARQ_CSI_MULTI, PucchChannelType::HARQ_CSI_MULTI, PucchChannelType::HARQ_CSI_SR_MULTI].contains(&self)
+    }
+
+    fn has_sr(&self) -> bool {
+        [PucchChannelType::SR, PucchChannelType::HARQ_SR_MULTI, PucchChannelType::CSI_SR_MULTI, PucchChannelType::HARQ_CSI_SR_MULTI].contains(&self)
+    }
+
+    fn has_csi(&self) -> bool {
+        unimplemented!()
+    }
+
+    fn is_multi(&self) -> bool {
+        unimplemented!()
+    }
+}
+
+impl PucchLogicChannel {
+    fn is_overlap(pucch_channels: &[PucchLogicChannel]) -> bool {
+        pucch_channels.iter().fold(0, |bitmap, channel| )
+        unimplemented!()
+    }
+}
+
+fn csi_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: Vec<PucchLogicChannel>) -> Vec<PucchLogicChannel> {
+    unimplemented!()
+}

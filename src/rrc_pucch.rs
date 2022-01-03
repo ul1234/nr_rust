@@ -24,6 +24,9 @@ pub struct PucchConfigR {
     pub pucch_format2: PucchFormatConfigR,
     pub pucch_format3: PucchFormatConfigR,
     pub pucch_format4: PucchFormatConfigR,
+    pub sr_resource: Option<Vec<SrResourceConfigR>>,
+    pub multi_csi_resource: Option<Vec<u32>>,   // pucch resource id
+    pub dl_data_to_ul_ack: Option<Vec<u32>>,    // K1
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,6 +67,32 @@ pub struct PucchFormatConfigR {
     pub num_slots: Option<u32>,
     pub pi2_bpsk: bool,
     pub simul_harq_csi: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SrResourceConfigR {
+    pub sr_resource_id: u32,
+    pub sr_id: u32,
+    pub period_offset: SrPeriodOffset,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SrPeriodOffset {
+    Sym2,
+    Sym6Or7,
+    SL1,
+    SL2(u32),
+    SL4(u32),
+    SL5(u32),
+    SL8(u32),
+    SL10(u32),
+    SL16(u32),
+    SL20(u32),
+    SL40(u32),
+    SL80(u32),
+    SL160(u32),
+    SL320(u32),
+    SL640(u32),
 }
 
 /********************** impl trait *************************/
@@ -107,6 +136,15 @@ impl Default for PucchConfigR {
             pucch_format2: PucchFormatConfigR::default(), 
             pucch_format3: PucchFormatConfigR::default(), 
             pucch_format4: PucchFormatConfigR::default(), 
+            sr_resource: Some(
+                vec![SrResourceConfigR{
+                    sr_resource_id: 0,
+                    sr_id: 0,
+                    period_offset: SrPeriodOffset::SL8(1),
+                }]
+            ),
+            multi_csi_resource: Some(vec![3]),
+            dl_data_to_ul_ack: Some(vec![2,3,4,5,6,7,8,9]),
         }
     }
 }
