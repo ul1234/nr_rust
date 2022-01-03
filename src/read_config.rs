@@ -1,6 +1,6 @@
-use std::fs::File;
 use crate::err::Error;
 use serde::de::DeserializeOwned;
+use std::fs::File;
 
 pub fn load_config<T: DeserializeOwned>(file_name: &str) -> Result<T, Error> {
     let f = File::open(file_name)?;

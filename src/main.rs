@@ -1,12 +1,12 @@
 mod constants;
-mod rrc_pucch;
-mod math;
-mod pucch;
 mod err;
-mod read_config;
+mod math;
 mod optional;
-use rrc_pucch::PucchConfigR;
+mod pucch;
+mod read_config;
+mod rrc_pucch;
 use pucch::PucchConfig;
+use rrc_pucch::PucchConfigR;
 
 use crate::read_config::load_config;
 
@@ -23,8 +23,14 @@ fn main() {
     // println!("{}", pucch_config_json_pretty);
 
     let rrc_pucch_config = match load_config::<PucchConfigR>("input/pucch_config.json") {
-        Ok(pucch_config) => {println!("{}", pucch_config); pucch_config},
-        Err(e) => { println!("{:?}", e); return () },
+        Ok(pucch_config) => {
+            println!("{}", pucch_config);
+            pucch_config
+        }
+        Err(e) => {
+            println!("{:?}", e);
+            return ();
+        }
     };
 
     let pucch_config: PucchConfig = rrc_pucch_config.into();

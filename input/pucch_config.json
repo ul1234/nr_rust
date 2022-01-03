@@ -23,7 +23,7 @@
       "start_prb": 0,
       "intra_slot_freq_hopping": "NoHopping",
       "format": {
-        "PucchFormat0": {
+        "Format0": {
           "init_cyclic_shift": 0,
           "num_sym": 2,
           "start_sym": 0
@@ -39,7 +39,7 @@
         }
       },
       "format": {
-        "PucchFormat1": {
+        "Format1": {
           "init_cyclic_shift": 2,
           "num_sym": 2,
           "start_sym": 3,
@@ -56,7 +56,7 @@
         }
       },
       "format": {
-        "PucchFormat2": {
+        "Format2": {
           "num_rb": 2,
           "num_sym": 2,
           "start_sym": 4
@@ -72,7 +72,7 @@
         }
       },
       "format": {
-        "PucchFormat3": {
+        "Format3": {
           "num_rb": 10,
           "num_sym": 6,
           "start_sym": 6

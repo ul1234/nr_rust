@@ -1,4 +1,3 @@
-
 pub const NUM_SYM_PER_SLOT: u32 = 14;
 pub const NUM_SC_PER_RB: u32 = 12;
 

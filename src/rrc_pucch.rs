@@ -1,6 +1,6 @@
-use core::fmt;
-use serde_derive::{Serialize, Deserialize};
 use crate::err::Error;
+use core::fmt;
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PucchConfigCommonR {
@@ -25,14 +25,14 @@ pub struct PucchConfigR {
     pub pucch_format3: PucchFormatConfigR,
     pub pucch_format4: PucchFormatConfigR,
     pub sr_resource: Option<Vec<SrResourceConfigR>>,
-    pub multi_csi_resource: Option<Vec<u32>>,   // pucch resource id
-    pub dl_data_to_ul_ack: Option<Vec<u32>>,    // K1
+    pub multi_csi_resource: Option<Vec<u32>>, // pucch resource id
+    pub dl_data_to_ul_ack: Option<Vec<u32>>,  // K1
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PucchResourceSetR {
     pub pucch_resource_set_id: u32,
-    pub pucch_resource_id: Vec<u32>,        // pucch resourc id
+    pub pucch_resource_id: Vec<u32>, // pucch resourc id
     pub max_payload_minus_1: Option<u32>,
 }
 
@@ -50,14 +50,13 @@ pub enum IntraSlotFreqHopping {
     NoHopping,
 }
 
-#[rustfmt::skip]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum PucchFormat {
-    PucchFormat0 { init_cyclic_shift: u32, num_sym: u32, start_sym: u32},
-    PucchFormat1 { init_cyclic_shift: u32, num_sym: u32, start_sym: u32, time_occ: u32},
-    PucchFormat2 { num_rb: u32, num_sym: u32, start_sym: u32},
-    PucchFormat3 { num_rb: u32, num_sym: u32, start_sym: u32},
-    PucchFormat4 { num_sym: u32, occ_len: u32, occ_idx: u32, start_sym: u32},
+    Format0 { init_cyclic_shift: u32, num_sym: u32, start_sym: u32 },
+    Format1 { init_cyclic_shift: u32, num_sym: u32, start_sym: u32, time_occ: u32 },
+    Format2 { num_rb: u32, num_sym: u32, start_sym: u32 },
+    Format3 { num_rb: u32, num_sym: u32, start_sym: u32 },
+    Format4 { num_sym: u32, occ_len: u32, occ_idx: u32, start_sym: u32 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,53 +98,47 @@ pub enum SrPeriodOffset {
 /********************** impl trait *************************/
 
 impl Default for PucchFormatConfigR {
-    fn default() -> Self { 
-        Self { inter_slot_freq_hopping: false,
-            addition_dmrs: false, 
+    fn default() -> Self {
+        Self {
+            inter_slot_freq_hopping: false,
+            addition_dmrs: false,
             max_coderate: Some(0.08),
-            num_slots: Some(1), 
-            pi2_bpsk: true, 
-            simul_harq_csi: true } 
+            num_slots: Some(1),
+            pi2_bpsk: true,
+            simul_harq_csi: true,
+        }
     }
 }
 
 impl Default for PucchConfigR {
     fn default() -> Self {
         PucchConfigR {
-            pucch_resource_set: Some(
-                vec![PucchResourceSetR {
-                    pucch_resource_set_id: 0,
-                    pucch_resource_id: vec![0, 1],
-                    max_payload_minus_1: None}
-                    ]
-            ),
-            pucch_resource: Some(
-                vec![PucchResourceR {
+            pucch_resource_set: Some(vec![PucchResourceSetR {
+                pucch_resource_set_id: 0,
+                pucch_resource_id: vec![0, 1],
+                max_payload_minus_1: None,
+            }]),
+            pucch_resource: Some(vec![
+                PucchResourceR {
                     pucch_resource_id: 0,
                     start_prb: 0,
                     intra_slot_freq_hopping: IntraSlotFreqHopping::NoHopping,
-                    format: PucchFormat::PucchFormat0 { init_cyclic_shift: 0, num_sym: 2, start_sym: 0},
+                    format: PucchFormat::Format0 { init_cyclic_shift: 0, num_sym: 2, start_sym: 0 },
                 },
                 PucchResourceR {
                     pucch_resource_id: 1,
                     start_prb: 0,
-                    intra_slot_freq_hopping: IntraSlotFreqHopping::Hopping {second_prb: 20},
-                    format: PucchFormat::PucchFormat1 { init_cyclic_shift: 2, num_sym: 2, start_sym: 3, time_occ: 1},
-                }]
-            ),
-            pucch_format1: PucchFormatConfigR::default(), 
-            pucch_format2: PucchFormatConfigR::default(), 
-            pucch_format3: PucchFormatConfigR::default(), 
-            pucch_format4: PucchFormatConfigR::default(), 
-            sr_resource: Some(
-                vec![SrResourceConfigR{
-                    sr_resource_id: 0,
-                    sr_id: 0,
-                    period_offset: SrPeriodOffset::SL8(1),
-                }]
-            ),
+                    intra_slot_freq_hopping: IntraSlotFreqHopping::Hopping { second_prb: 20 },
+                    format: PucchFormat::Format1 { init_cyclic_shift: 2, num_sym: 2, start_sym: 3, time_occ: 1 },
+                },
+            ]),
+            pucch_format1: PucchFormatConfigR::default(),
+            pucch_format2: PucchFormatConfigR::default(),
+            pucch_format3: PucchFormatConfigR::default(),
+            pucch_format4: PucchFormatConfigR::default(),
+            sr_resource: Some(vec![SrResourceConfigR { sr_resource_id: 0, sr_id: 0, period_offset: SrPeriodOffset::SL8(1) }]),
             multi_csi_resource: Some(vec![3]),
-            dl_data_to_ul_ack: Some(vec![2,3,4,5,6,7,8,9]),
+            dl_data_to_ul_ack: Some(vec![2, 3, 4, 5, 6, 7, 8, 9]),
         }
     }
 }
@@ -172,8 +165,6 @@ impl PucchConfigR {
     }
 
     pub fn pucch_resource_set(&self, o_uci: u32) -> &PucchResourceSetR {
-        self.pucch_resource_set.as_ref().unwrap().iter()
-            .find(|s| o_uci <= s.max_payload_minus_1.unwrap_or(1706))
-            .unwrap()
+        self.pucch_resource_set.as_ref().unwrap().iter().find(|s| o_uci <= s.max_payload_minus_1.unwrap_or(1706)).unwrap()
     }
 }

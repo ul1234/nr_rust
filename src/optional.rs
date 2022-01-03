@@ -1,6 +1,6 @@
-use serde::ser::{Serialize, Serializer};
-use serde::de::{Deserialize, Deserializer};
 use crate::err::Error;
+use serde::de::{Deserialize, Deserializer};
+use serde::ser::{Serialize, Serializer};
 
 #[derive(Debug)]
 pub struct Optional<T> {
@@ -13,18 +13,14 @@ impl<T: PartialEq> Optional<T> {
     pub fn check(&self) -> Result<(), Error> {
         if let Some(val) = &self.val {
             if let Some(vec) = &self.possible_val {
-                return if vec.contains(val) { Ok(()) } else { Err("check fail")? }
+                return if vec.contains(val) { Ok(()) } else { Err("check fail")? };
             }
         }
         Ok(())
     }
 
     pub fn new(val: T) -> Self {
-        Self {
-            val: Some(val),
-            possible_val: None,
-            default_val: None,
-        }
+        Self { val: Some(val), possible_val: None, default_val: None }
     }
 
     pub fn possible(&mut self, vec: Vec<T>) -> &mut Self {
@@ -52,10 +48,6 @@ impl<T: Serialize> Serialize for Optional<T> {
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Optional<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let val = Option::deserialize(deserializer)?;
-        Ok(Self {
-            val,
-            possible_val: None,
-            default_val: None,
-        })
+        Ok(Self { val, possible_val: None, default_val: None })
     }
 }
