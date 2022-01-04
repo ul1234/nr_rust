@@ -149,22 +149,3 @@ impl fmt::Display for PucchConfigR {
         write!(f, "{}", json_pretty)
     }
 }
-/********************** impl *************************/
-
-impl PucchConfigR {
-    fn simul_harq_csi(&self) -> bool {
-        self.pucch_format2.simul_harq_csi
-    }
-
-    fn max_hold_bits(&self) -> u32 {
-        0
-    }
-
-    fn valid(&self) -> bool {
-        self.pucch_resource_set.is_none()
-    }
-
-    pub fn pucch_resource_set(&self, o_uci: u32) -> &PucchResourceSetR {
-        self.pucch_resource_set.as_ref().unwrap().iter().find(|s| o_uci <= s.max_payload_minus_1.unwrap_or(1706)).unwrap()
-    }
-}
