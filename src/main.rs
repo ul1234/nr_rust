@@ -1,3 +1,5 @@
+#[macro_use]
+mod macros;
 mod constants;
 mod err;
 mod math;

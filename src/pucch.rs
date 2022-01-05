@@ -24,7 +24,7 @@ struct PucchResourceSet {
     pucch_resource_set_id: u32,
     pucch_resource_id: Vec<u32>,
     max_payload_minus_1: u32,
-    pucch_resource_index: Vec<usize>,
+    pucch_resource_idx: Vec<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,7 +55,7 @@ struct SrResourceConfig {
     offset: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 enum PucchFormatType {
     ShortPucch,
     LongPucch,
@@ -126,10 +126,10 @@ impl From<PucchConfigR> for PucchConfig {
                     Some(val) => val,
                     None => DEFAULT_PAYLOAD_SIZE[i],
                 },
-                pucch_resource_index: set
+                pucch_resource_idx: set
                     .pucch_resource_id
                     .iter()
-                    .map(|&id| PucchConfig::pucch_resource_index_cfg(&pucch_resource, id))
+                    .map(|&id| PucchConfig::pucch_resource_idx_cfg(&pucch_resource, id))
                     .collect(),
             })
             .collect::<Vec<_>>();
@@ -139,6 +139,8 @@ impl From<PucchConfigR> for PucchConfig {
         let pucch_format3: PucchFormatConfig = pucch_rrc.pucch_format3.into();
         let pucch_format4: PucchFormatConfig = pucch_rrc.pucch_format4.into();
 
+
+
         let pucch_config = PucchConfig {
             pucch_resource_set,
             pucch_resource,
@@ -147,13 +149,15 @@ impl From<PucchConfigR> for PucchConfig {
             pucch_format3,
             pucch_format4,
             sr_resource: None,
-            multi_csi_resource: None,
+            multi_csi_resource: pucch_rrc.multi_csi_resource,
             dl_data_to_ul_ack: None,
         };
 
         for pucch_resource in &pucch_config.pucch_resource {
             *pucch_resource.max_hold_bits.borrow_mut() = pucch_config.max_hold_bits(pucch_resource);
         }
+
+        assert!(pucch_config.check(), "Invalid pucch config!");
 
         pucch_config
     }
@@ -162,7 +166,23 @@ impl From<PucchConfigR> for PucchConfig {
 /*************** impl config time ***************************/
 
 impl PucchConfig {
-    fn pucch_resource_index_cfg(pucch_resource: &[PucchResource], resource_id: u32) -> usize {
+    fn from_multi_csi_resource(multi_csi_resource: &Option<Vec<u32>>) -> Option<Vec<u32>> {
+        match multi_csi_resource {
+            Some(resources) => {
+                assert!(resources.len() <= 2, "Invalid multi_csi_resource {:?}!", resources);
+                unimplemented!()
+            },
+            None => None,
+        }
+    }
+
+    fn check(&self) -> bool {
+        // multi_csi_resource at most have 2 resources
+        let is_pass = if let Some(resource_idx) = &self.multi_csi_resource { resource_idx.len() <= 2 } else { true };
+        is_pass
+    }
+
+    fn pucch_resource_idx_cfg(pucch_resource: &[PucchResource], resource_id: u32) -> usize {
         pucch_resource
             .iter()
             .position(|resource| resource.pucch_resource_id == resource_id)
@@ -200,15 +220,15 @@ impl PucchConfig {
             const START_SYM: u32 = 5;
             const NUM_TABLE: usize = (NUM_SYM_PER_SLOT - START_SYM + 1) as usize;
             let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
-            let index: usize = (num_sym - START_SYM) as usize;
+            let idx: usize = (num_sym - START_SYM) as usize;
             if pucch_format_config.addition_dmrs {
                 #[rustfmt::skip]
                 const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[1, 3, 6, 8], &[1, 3, 6, 9], &[1, 4, 7, 10], &[1, 4, 7, 11], &[1, 5, 8, 12]];
-                PUCCH_DMRS_POS_TABLE[index]
+                PUCCH_DMRS_POS_TABLE[idx]
             } else {
                 #[rustfmt::skip]
                 const PUCCH_DMRS_POS_TABLE: [&'static [u32]; NUM_TABLE] = [&[0, 3], &[1, 4], &[1, 4], &[1, 5], &[1, 6], &[2, 7], &[2, 7], &[2, 8], &[2, 9], &[3, 10]];
-                PUCCH_DMRS_POS_TABLE[index]
+                PUCCH_DMRS_POS_TABLE[idx]
             }
         }
     }
@@ -250,10 +270,10 @@ impl PucchConfig {
 /******************** impl runtime **********************/
 impl PucchConfig {
     fn pucch_resource(&self, resource_id: u32) -> &PucchResource {
-        &self.pucch_resource[self.pucch_resource_index(resource_id)]
+        &self.pucch_resource[self.pucch_resource_idx(resource_id)]
     }
 
-    fn pucch_resource_index(&self, resource_id: u32) -> usize {
+    fn pucch_resource_idx(&self, resource_id: u32) -> usize {
         self.pucch_resource
             .iter()
             .position(|resource| resource.pucch_resource_id == resource_id)
@@ -273,18 +293,18 @@ impl PucchConfig {
         num_cce: u32,
     ) -> &PucchResource {
         let pucch_resource_set = self.pucch_resource_set_for_uci(o_uci);
-        let pucch_resource_index = match pucch_resource_set.pucch_resource_set_id {
+        let pucch_resource_idx = match pucch_resource_set.pucch_resource_set_id {
             0 => {
                 // 38.213, 9.2.3
                 let num_pucch_resource = pucch_resource_set.pucch_resource_id.len() as u32;
                 if num_pucch_resource > 8 {
-                    let pucch_resource_index = floor(dci_first_cce * ceil(num_pucch_resource, 8), num_cce)
+                    let pucch_resource_idx = floor(dci_first_cce * ceil(num_pucch_resource, 8), num_cce)
                         + pucch_resource_indicator * ceil(num_pucch_resource, 8);
                     let num_pucch_resource_mod_8 = num_pucch_resource % 8;
                     if pucch_resource_indicator < num_pucch_resource_mod_8 {
-                        pucch_resource_index
+                        pucch_resource_idx
                     } else {
-                        pucch_resource_index + num_pucch_resource_mod_8
+                        pucch_resource_idx + num_pucch_resource_mod_8
                     }
                 } else {
                     pucch_resource_indicator
@@ -294,8 +314,8 @@ impl PucchConfig {
             _ => panic!("impossible to be here!"),
         };
 
-        let pucch_resource_index = pucch_resource_set.pucch_resource_index[pucch_resource_index as usize];
-        &self.pucch_resource[pucch_resource_index]
+        let pucch_resource_idx = pucch_resource_set.pucch_resource_idx[pucch_resource_idx as usize];
+        &self.pucch_resource[pucch_resource_idx]
     }
 }
 
@@ -332,11 +352,15 @@ impl PucchResource {
 struct PucchLogicChannel {
     channel_type: PucchChannelType,
     pucch_resource_id: u32,
-    pucch_resource_index: RefCell<Option<usize>>,
+    pucch_resource_idx: RefCell<Option<usize>>, // idx to PucchConfig.PucchResource, an optimization approach
 }
 
-struct CsiChannel {
+#[derive(Debug, PartialEq)]
+struct CsiReport {
     priority: u32,
+    o_csi: u32, // csi payload size
+    o_csi_1: u32,
+    o_csi_2: Option<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -344,7 +368,7 @@ enum PucchChannelType {
     HarqDci,
     HarqSps,
     Sr,
-    Csi,
+    Csi(CsiReport),
     CsiMulti,
     HarqSrMulti,
     HarqCsiMulti,
@@ -354,52 +378,44 @@ enum PucchChannelType {
 
 impl PucchChannelType {
     fn has_harq(&self) -> bool {
-        [
-            PucchChannelType::HarqDci,
-            PucchChannelType::HarqSps,
-            PucchChannelType::HarqCsiMulti,
-            PucchChannelType::HarqCsiMulti,
-            PucchChannelType::HarqCsiSrMulti,
-        ]
-        .contains(&self)
+        match &self {
+            PucchChannelType::HarqDci
+            | PucchChannelType::HarqSps
+            | PucchChannelType::HarqSrMulti
+            | PucchChannelType::HarqCsiMulti
+            | PucchChannelType::HarqCsiSrMulti => true,
+            _ => false,
+        }
     }
 
     fn has_sr(&self) -> bool {
-        [PucchChannelType::Sr, PucchChannelType::HarqSrMulti, PucchChannelType::CsiSrMulti, PucchChannelType::HarqCsiSrMulti]
-            .contains(&self)
+        unimplemented!()
+    }
+
+    fn is_csi(&self) -> bool {
+        match &self {
+            PucchChannelType::Csi { .. } => true,
+            _ => false,
+        }
     }
 
     fn has_csi(&self) -> bool {
-        [
-            PucchChannelType::Csi,
-            PucchChannelType::CsiMulti,
-            PucchChannelType::HarqCsiMulti,
-            PucchChannelType::CsiSrMulti,
-            PucchChannelType::HarqCsiSrMulti,
-        ]
-        .contains(&self)
+        unimplemented!()
     }
 
     fn is_multi(&self) -> bool {
-        [
-            PucchChannelType::CsiMulti,
-            PucchChannelType::HarqSrMulti,
-            PucchChannelType::HarqCsiMulti,
-            PucchChannelType::CsiSrMulti,
-            PucchChannelType::HarqCsiSrMulti,
-        ]
-        .contains(&self)
+        unimplemented!()
     }
 }
 
 impl PucchLogicChannel {
     fn pucch_resource<'a>(&'a self, pucch_config: &'a PucchConfig) -> &'a PucchResource {
-        match *self.pucch_resource_index.borrow() {
-            Some(index) => &pucch_config.pucch_resource[index],
+        match *self.pucch_resource_idx.borrow() {
+            Some(idx) => &pucch_config.pucch_resource[idx],
             None => {
-                let index = pucch_config.pucch_resource_index(self.pucch_resource_id);
-                *self.pucch_resource_index.borrow_mut() = Some(index);
-                &pucch_config.pucch_resource[index]
+                let idx = pucch_config.pucch_resource_idx(self.pucch_resource_id);
+                *self.pucch_resource_idx.borrow_mut() = Some(idx);
+                &pucch_config.pucch_resource[idx]
             }
         }
     }
@@ -412,7 +428,7 @@ impl PucchLogicChannel {
             .scan(0u32, |accum_bitmap, channel| {
                 let pucch_bitmap = channel.pucch_resource(pucch_config).sym_bitmap();
                 let is_overlap = (*accum_bitmap & pucch_bitmap) != 0;
-                *accum_bitmap = *accum_bitmap | pucch_bitmap;
+                *accum_bitmap |= pucch_bitmap;
                 Some(is_overlap)
             })
             .any(|is_overlap| is_overlap)
@@ -420,41 +436,98 @@ impl PucchLogicChannel {
 }
 
 fn csi_pucch_proc(pucch_config: &PucchConfig, mut pucch_logic_channel: Vec<PucchLogicChannel>) {
-    let csi_pucch_index = pucch_logic_channel
+    let csi_pucch_idx = pucch_logic_channel
         .iter()
         .enumerate()
-        .filter(|&(i, channel)| channel.channel_type == PucchChannelType::Csi)
+        .filter(|&(i, channel)| channel.channel_type.is_csi())
         .map(|(i, channel)| i)
         .collect::<Vec<_>>();
 
-    if csi_pucch_index.len() > 1 {
+    if csi_pucch_idx.len() > 1 {
         match &pucch_config.multi_csi_resource {
             Some(mult_csi_resources) => {
-                let csi_pucch = csi_pucch_index.iter().map(|&i| &pucch_logic_channel[i]);
+                let csi_pucch = csi_pucch_idx.iter().map(|&i| &pucch_logic_channel[i]);
                 let is_overlap = PucchLogicChannel::is_overlap(pucch_config, csi_pucch);
                 if is_overlap {
-                    multi_csi_pucch(pucch_config, pucch_logic_channel, csi_pucch_index);
+                    multi_csi_pucch_proc(pucch_config, pucch_logic_channel, csi_pucch_idx);
                 } else {
-                    select_csi_pucch(pucch_config, pucch_logic_channel, csi_pucch_index);
+                    select_csi_pucch_proc(pucch_config, pucch_logic_channel, csi_pucch_idx);
                 }
             }
             None => {
-                select_csi_pucch(pucch_config, pucch_logic_channel, csi_pucch_index);
+                select_csi_pucch_proc(pucch_config, pucch_logic_channel, csi_pucch_idx);
             }
         }
     }
 }
 
-fn multi_csi_pucch(pucch_config: &PucchConfig, mut pucch_logic_channel: Vec<PucchLogicChannel>, csi_pucch_index: Vec<usize>) {
+fn multi_csi_pucch_proc(
+    pucch_config: &PucchConfig,
+    mut pucch_logic_channel: Vec<PucchLogicChannel>,
+    csi_pucch_idx: Vec<usize>,
+) {
+    let o_csi_all_reports = csi_pucch_idx.iter().fold(0u32, |o_csi_sum, &idx| {
+        let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+        o_csi_sum + csi_report.o_csi
+    });
+
+    let resource_idx = pucch_config.multi_csi_resource.as_ref().unwrap();
+    
+
+
     unimplemented!()
 }
 
-fn select_csi_pucch(
+fn select_csi_pucch_proc(
     pucch_config: &PucchConfig,
     mut pucch_logic_channel: Vec<PucchLogicChannel>,
-    csi_pucch_index: Vec<usize>,
+    csi_channel_idx: Vec<usize>,
 ) {
-    let csi_pucch = pucch_logic_channel.iter().filter(|channel| channel.channel_type.has_csi());
-    //let highest_priority_csi_pucch =
-    unimplemented!();
+    // the lower channel priority value, the higher priority
+    let highest_priority_csi_channel_idx = *csi_channel_idx
+        .iter()
+        .min_by_key(|&&idx| {
+            let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+            csi_report.priority
+        })
+        .unwrap();
+    let highest_pucch_resource = pucch_logic_channel[highest_priority_csi_channel_idx].pucch_resource(pucch_config);
+
+    // the second CSI should be the second priority CSI which fulfill:
+    // (1) do not overlap with highest priority CSI PUCCH
+    // (2) if highest priority CSI is long PUCCH, it should be short PUCCH
+    let second_csi_channel_idx = match highest_pucch_resource.format_type {
+        PucchFormatType::LongPucch => csi_channel_idx
+            .iter()
+            .filter(|&&idx| {
+                let resource = pucch_logic_channel[idx].pucch_resource(pucch_config);
+                (idx != highest_priority_csi_channel_idx)
+                    && resource.format_type == PucchFormatType::ShortPucch
+                    && !resource.is_overlap(highest_pucch_resource)
+            })
+            .min_by_key(|&&idx| {
+                let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+                csi_report.priority
+            }),
+        PucchFormatType::ShortPucch => csi_channel_idx
+            .iter()
+            .filter(|&&idx| {
+                let resource = pucch_logic_channel[idx].pucch_resource(pucch_config);
+                (idx != highest_priority_csi_channel_idx) && !resource.is_overlap(highest_pucch_resource)
+            })
+            .min_by_key(|&&idx| {
+                let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+                csi_report.priority
+            }),
+    };
+
+    // for CSI, only retain highest/second priority CSI pucch, remove all the others
+    match second_csi_channel_idx {
+        Some(&second_idx) => pucch_logic_channel.retain(with_index(|idx, channel: &PucchLogicChannel| {
+            !channel.channel_type.is_csi() || idx == second_idx || idx == highest_priority_csi_channel_idx
+        })),
+        None => pucch_logic_channel.retain(with_index(|idx, channel: &PucchLogicChannel| {
+            !channel.channel_type.is_csi() || idx == highest_priority_csi_channel_idx
+        })),
+    }
 }
