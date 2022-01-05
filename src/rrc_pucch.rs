@@ -74,6 +74,7 @@ pub struct SrResourceConfigR {
     pub sr_resource_id: u32,
     pub sr_id: u32,
     pub period_offset: SrPeriodOffset,
+    pub pucch_resource_id: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -136,7 +137,12 @@ impl Default for PucchConfigR {
             pucch_format2: PucchFormatConfigR::default(),
             pucch_format3: PucchFormatConfigR::default(),
             pucch_format4: PucchFormatConfigR::default(),
-            sr_resource: Some(vec![SrResourceConfigR { sr_resource_id: 0, sr_id: 0, period_offset: SrPeriodOffset::SL8(1) }]),
+            sr_resource: Some(vec![SrResourceConfigR {
+                sr_resource_id: 0,
+                sr_id: 0,
+                period_offset: SrPeriodOffset::SL8(1),
+                pucch_resource_id: 1,
+            }]),
             multi_csi_resource: Some(vec![3]),
             dl_data_to_ul_ack: Some(vec![2, 3, 4, 5, 6, 7, 8, 9]),
         }

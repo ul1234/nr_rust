@@ -10,21 +10,31 @@ use std::cell::RefCell;
 pub struct PucchConfig {
     pucch_resource_set: Vec<PucchResourceSet>,
     pucch_resource: Vec<PucchResource>,
+    pucch_formats: PucchFormatsConfig,
+    sr_resource: Option<Vec<SrResourceConfig>>,
+    multi_csi_resource: Option<Vec<PucchResourceId>>,
+    dl_data_to_ul_ack: Option<Vec<u32>>, // K1
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PucchFormatsConfig {
     pucch_format1: PucchFormatConfig,
     pucch_format2: PucchFormatConfig,
     pucch_format3: PucchFormatConfig,
     pucch_format4: PucchFormatConfig,
-    sr_resource: Option<Vec<SrResourceConfig>>,
-    multi_csi_resource: Option<Vec<u32>>, // pucch resource id
-    dl_data_to_ul_ack: Option<Vec<u32>>,  // K1
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PucchResourceSet {
     pucch_resource_set_id: u32,
-    pucch_resource_id: Vec<u32>,
+    pucch_resource_id: Vec<PucchResourceId>,
     max_payload_minus_1: u32,
-    pucch_resource_idx: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PucchResourceId {
+    id: u32,
+    idx: usize, // to optimize the retrieve of pucch resource
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,7 +44,7 @@ struct PucchResource {
     intra_slot_freq_hopping: IntraSlotFreqHopping,
     format: PucchFormat,
     format_type: PucchFormatType,
-    max_hold_bits: RefCell<u32>,
+    max_hold_bits: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +63,7 @@ struct SrResourceConfig {
     sr_id: u32,
     period: u32, // slot
     offset: u32,
+    pucch_resource_id: PucchResourceId,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -99,17 +110,27 @@ impl From<PucchFormatConfigR> for PucchFormatConfig {
 
 impl From<PucchConfigR> for PucchConfig {
     fn from(pucch_rrc: PucchConfigR) -> Self {
+        let pucch_formats = PucchFormatsConfig {
+            pucch_format1: pucch_rrc.pucch_format1.into(),
+            pucch_format2: pucch_rrc.pucch_format2.into(),
+            pucch_format3: pucch_rrc.pucch_format3.into(),
+            pucch_format4: pucch_rrc.pucch_format4.into(),
+        };
+
         let pucch_resource = pucch_rrc
             .pucch_resource
             .unwrap()
             .iter()
-            .map(|resource| PucchResource {
-                pucch_resource_id: resource.pucch_resource_id,
-                start_prb: resource.start_prb,
-                intra_slot_freq_hopping: resource.intra_slot_freq_hopping,
-                format: resource.format,
-                format_type: PucchResource::pucch_format_type(&resource.format),
-                max_hold_bits: RefCell::new(0),
+            .map(|resource| {
+                let temp_pucch_resource = PucchResource {
+                    pucch_resource_id: resource.pucch_resource_id,
+                    start_prb: resource.start_prb,
+                    intra_slot_freq_hopping: resource.intra_slot_freq_hopping,
+                    format: resource.format,
+                    format_type: PucchResource::pucch_format_type(&resource.format),
+                    max_hold_bits: 0,
+                };
+                PucchResource { max_hold_bits: temp_pucch_resource.max_hold_bits(&pucch_formats), ..temp_pucch_resource }
             })
             .collect::<Vec<_>>();
 
@@ -121,65 +142,35 @@ impl From<PucchConfigR> for PucchConfig {
             .enumerate()
             .map(|(i, set)| PucchResourceSet {
                 pucch_resource_set_id: set.pucch_resource_set_id,
-                pucch_resource_id: set.pucch_resource_id.clone(),
+                pucch_resource_id: set
+                    .pucch_resource_id
+                    .iter()
+                    .map(|&id| PucchResourceId::from_pucch_resource_id(&pucch_resource, id))
+                    .collect::<Vec<_>>(),
                 max_payload_minus_1: match set.max_payload_minus_1 {
                     Some(val) => val,
                     None => DEFAULT_PAYLOAD_SIZE[i],
                 },
-                pucch_resource_idx: set
-                    .pucch_resource_id
-                    .iter()
-                    .map(|&id| PucchConfig::pucch_resource_idx_cfg(&pucch_resource, id))
-                    .collect(),
             })
             .collect::<Vec<_>>();
 
-        let pucch_format1: PucchFormatConfig = pucch_rrc.pucch_format1.into();
-        let pucch_format2: PucchFormatConfig = pucch_rrc.pucch_format2.into();
-        let pucch_format3: PucchFormatConfig = pucch_rrc.pucch_format3.into();
-        let pucch_format4: PucchFormatConfig = pucch_rrc.pucch_format4.into();
+        let multi_csi_resource = PucchConfig::from_multi_csi_resource(&pucch_resource, &pucch_rrc.multi_csi_resource);
 
-
-
-        let pucch_config = PucchConfig {
+        PucchConfig {
             pucch_resource_set,
             pucch_resource,
-            pucch_format1,
-            pucch_format2,
-            pucch_format3,
-            pucch_format4,
+            pucch_formats,
             sr_resource: None,
-            multi_csi_resource: pucch_rrc.multi_csi_resource,
+            multi_csi_resource,
             dl_data_to_ul_ack: None,
-        };
-
-        for pucch_resource in &pucch_config.pucch_resource {
-            *pucch_resource.max_hold_bits.borrow_mut() = pucch_config.max_hold_bits(pucch_resource);
         }
-
-        assert!(pucch_config.check(), "Invalid pucch config!");
-
-        pucch_config
     }
 }
 
 /*************** impl config time ***************************/
-
-impl PucchConfig {
-    fn from_multi_csi_resource(multi_csi_resource: &Option<Vec<u32>>) -> Option<Vec<u32>> {
-        match multi_csi_resource {
-            Some(resources) => {
-                assert!(resources.len() <= 2, "Invalid multi_csi_resource {:?}!", resources);
-                unimplemented!()
-            },
-            None => None,
-        }
-    }
-
-    fn check(&self) -> bool {
-        // multi_csi_resource at most have 2 resources
-        let is_pass = if let Some(resource_idx) = &self.multi_csi_resource { resource_idx.len() <= 2 } else { true };
-        is_pass
+impl PucchResourceId {
+    fn from_pucch_resource_id(pucch_resource: &[PucchResource], resource_id: u32) -> PucchResourceId {
+        PucchResourceId { id: resource_id, idx: PucchResourceId::pucch_resource_idx_cfg(pucch_resource, resource_id) }
     }
 
     fn pucch_resource_idx_cfg(pucch_resource: &[PucchResource], resource_id: u32) -> usize {
@@ -189,37 +180,64 @@ impl PucchConfig {
             .unwrap_or_else(|| panic!("pucch resource id {} not found!", resource_id))
     }
 
-    fn pucch_format_config(&self, pucch_resource: &PucchResource) -> Option<&PucchFormatConfig> {
-        match pucch_resource.format {
-            PucchFormat::Format1 { .. } => Some(&self.pucch_format1),
-            PucchFormat::Format2 { .. } => Some(&self.pucch_format2),
-            PucchFormat::Format3 { .. } => Some(&self.pucch_format3),
-            PucchFormat::Format4 { .. } => Some(&self.pucch_format4),
+    fn pucch_resource<'a>(&'a self, pucch_config: &'a PucchConfig) -> &'a PucchResource {
+        &pucch_config.pucch_resource[self.idx]
+    }
+}
+
+impl PucchConfig {
+    fn from_multi_csi_resource(
+        pucch_resource: &[PucchResource],
+        multi_csi_resource: &Option<Vec<u32>>,
+    ) -> Option<Vec<PucchResourceId>> {
+        match multi_csi_resource {
+            Some(resources) => {
+                assert!(resources.len() <= 2, "Invalid multi_csi_resource {:?}!", resources);
+                let mut pucch_resource_id = resources
+                    .iter()
+                    .map(|&id| PucchResourceId::from_pucch_resource_id(&pucch_resource, id))
+                    .collect::<Vec<_>>();
+                // sort the pucch resource from small capacity to large capacity
+                pucch_resource_id.sort_by_key(|resource_id| pucch_resource[resource_id.idx].max_hold_bits);
+                Some(pucch_resource_id)
+            }
+            None => None,
+        }
+    }
+}
+
+impl PucchResource {
+    fn pucch_format_config<'a>(&'a self, pucch_formats: &'a PucchFormatsConfig) -> &'a PucchFormatConfig {
+        match self.format {
+            PucchFormat::Format1 { .. } => &pucch_formats.pucch_format1,
+            PucchFormat::Format2 { .. } => &pucch_formats.pucch_format2,
+            PucchFormat::Format3 { .. } => &pucch_formats.pucch_format3,
+            PucchFormat::Format4 { .. } => &pucch_formats.pucch_format4,
             _ => panic!("impossible to be here!"),
         }
     }
 
-    fn pucch_num_dmrs_sym(&self, pucch_resource: &PucchResource) -> u32 {
-        self.pucch_dmrs_pos(pucch_resource).len() as u32
+    fn pucch_num_dmrs_sym(&self, pucch_formats: &PucchFormatsConfig) -> u32 {
+        self.pucch_dmrs_pos(pucch_formats).len() as u32
     }
 
     // 38.211, Table 6.4.1.3.3.2-1, DMRS for PUCCH format 3 and 4
-    fn pucch_dmrs_pos(&self, pucch_resource: &PucchResource) -> &[u32] {
-        let num_sym = match &pucch_resource.format {
+    fn pucch_dmrs_pos(&self, pucch_formats: &PucchFormatsConfig) -> &[u32] {
+        let num_sym = match &self.format {
             PucchFormat::Format3 { num_rb: _, num_sym, .. } => *num_sym,
             PucchFormat::Format4 { num_sym, .. } => *num_sym,
             _ => panic!("impossible to be here!"),
         };
 
         if num_sym == 4 {
-            match pucch_resource.intra_slot_freq_hopping {
+            match self.intra_slot_freq_hopping {
                 IntraSlotFreqHopping::Hopping { .. } => &[0, 2],
                 IntraSlotFreqHopping::NoHopping => &[1],
             }
         } else {
             const START_SYM: u32 = 5;
             const NUM_TABLE: usize = (NUM_SYM_PER_SLOT - START_SYM + 1) as usize;
-            let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
+            let pucch_format_config = self.pucch_format_config(pucch_formats);
             let idx: usize = (num_sym - START_SYM) as usize;
             if pucch_format_config.addition_dmrs {
                 #[rustfmt::skip]
@@ -234,13 +252,13 @@ impl PucchConfig {
     }
 
     // 38.213, 9.2.5.2
-    fn max_hold_bits(&self, pucch_resource: &PucchResource) -> u32 {
-        match &pucch_resource.format {
+    fn max_hold_bits(&self, pucch_formats: &PucchFormatsConfig) -> u32 {
+        match &self.format {
             PucchFormat::Format0 { .. } => 2,
             PucchFormat::Format1 { .. } => 2,
             _ => {
-                let pucch_format_config = self.pucch_format_config(pucch_resource).unwrap();
-                let num_bits = match &pucch_resource.format {
+                let pucch_format_config = self.pucch_format_config(pucch_formats);
+                let num_bits = match &self.format {
                     PucchFormat::Format2 { num_rb, num_sym, .. } => {
                         let data_sc = NUM_SC_PER_RB - 4;
                         let qm = QPSK_BITS;
@@ -248,13 +266,13 @@ impl PucchConfig {
                     }
                     PucchFormat::Format3 { num_rb, num_sym, .. } => {
                         let data_sc = NUM_SC_PER_RB;
-                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
+                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_formats);
                         let qm = if pucch_format_config.pi2_bpsk { BPSK_BITS } else { QPSK_BITS };
                         pucch_format_config.max_coderate_x100 * (*num_rb) * data_sc * num_data_sym * qm
                     }
                     PucchFormat::Format4 { num_sym, occ_len, .. } => {
                         let data_sc = NUM_SC_PER_RB / *occ_len;
-                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_resource);
+                        let num_data_sym = *num_sym - self.pucch_num_dmrs_sym(pucch_formats);
                         let qm = if pucch_format_config.pi2_bpsk { BPSK_BITS } else { QPSK_BITS };
                         pucch_format_config.max_coderate_x100 * data_sc * num_data_sym * qm
                     }
@@ -269,17 +287,6 @@ impl PucchConfig {
 
 /******************** impl runtime **********************/
 impl PucchConfig {
-    fn pucch_resource(&self, resource_id: u32) -> &PucchResource {
-        &self.pucch_resource[self.pucch_resource_idx(resource_id)]
-    }
-
-    fn pucch_resource_idx(&self, resource_id: u32) -> usize {
-        self.pucch_resource
-            .iter()
-            .position(|resource| resource.pucch_resource_id == resource_id)
-            .unwrap_or_else(|| panic!("pucch resource id {} not found!", resource_id))
-    }
-
     // 38.213, 9.2.1
     fn pucch_resource_set_for_uci(&self, o_uci: u32) -> &PucchResourceSet {
         self.pucch_resource_set.iter().find(|&set| o_uci <= set.max_payload_minus_1).unwrap()
@@ -293,7 +300,7 @@ impl PucchConfig {
         num_cce: u32,
     ) -> &PucchResource {
         let pucch_resource_set = self.pucch_resource_set_for_uci(o_uci);
-        let pucch_resource_idx = match pucch_resource_set.pucch_resource_set_id {
+        let idx_in_set = match pucch_resource_set.pucch_resource_set_id {
             0 => {
                 // 38.213, 9.2.3
                 let num_pucch_resource = pucch_resource_set.pucch_resource_id.len() as u32;
@@ -314,7 +321,7 @@ impl PucchConfig {
             _ => panic!("impossible to be here!"),
         };
 
-        let pucch_resource_idx = pucch_resource_set.pucch_resource_idx[pucch_resource_idx as usize];
+        let pucch_resource_idx = pucch_resource_set.pucch_resource_id[idx_in_set as usize].idx;
         &self.pucch_resource[pucch_resource_idx]
     }
 }
@@ -351,11 +358,10 @@ impl PucchResource {
 #[derive(Debug)]
 struct PucchLogicChannel {
     channel_type: PucchChannelType,
-    pucch_resource_id: u32,
-    pucch_resource_idx: RefCell<Option<usize>>, // idx to PucchConfig.PucchResource, an optimization approach
+    pucch_resource_id: PucchResourceId,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct CsiReport {
     priority: u32,
     o_csi: u32, // csi payload size
@@ -369,7 +375,7 @@ enum PucchChannelType {
     HarqSps,
     Sr,
     Csi(CsiReport),
-    CsiMulti,
+    CsiMulti(Vec<CsiReport>),
     HarqSrMulti,
     HarqCsiMulti,
     CsiSrMulti,
@@ -410,14 +416,7 @@ impl PucchChannelType {
 
 impl PucchLogicChannel {
     fn pucch_resource<'a>(&'a self, pucch_config: &'a PucchConfig) -> &'a PucchResource {
-        match *self.pucch_resource_idx.borrow() {
-            Some(idx) => &pucch_config.pucch_resource[idx],
-            None => {
-                let idx = pucch_config.pucch_resource_idx(self.pucch_resource_id);
-                *self.pucch_resource_idx.borrow_mut() = Some(idx);
-                &pucch_config.pucch_resource[idx]
-            }
-        }
+        self.pucch_resource_id.pucch_resource(pucch_config)
     }
 
     fn is_overlap<'a, F>(pucch_config: &'a PucchConfig, pucch_channels: F) -> bool
@@ -466,16 +465,29 @@ fn multi_csi_pucch_proc(
     mut pucch_logic_channel: Vec<PucchLogicChannel>,
     csi_pucch_idx: Vec<usize>,
 ) {
-    let o_csi_all_reports = csi_pucch_idx.iter().fold(0u32, |o_csi_sum, &idx| {
-        let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
-        o_csi_sum + csi_report.o_csi
+    let all_csi_reports = csi_pucch_idx
+        .iter()
+        .map(|&idx| enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let o_csi_all_reports = all_csi_reports.iter().fold(0u32, |o_csi_sum, csi_report| o_csi_sum + csi_report.o_csi);
+
+    let resource_id = pucch_config.multi_csi_resource.as_ref().unwrap();
+    let last_resource_id = resource_id.last().unwrap();
+    // find the first (smallest) resource which can hold all the csi payload, if not found, take the last (largest) one
+    // pucch_config.multi_csi_resource already been sorted, the capacity is from small to large
+    let csi_pucch_id = resource_id
+        .iter()
+        .find(|&id| o_csi_all_reports <= id.pucch_resource(pucch_config).max_hold_bits)
+        .unwrap_or(last_resource_id);
+
+    // remove all CSI PUCCH, then add a CSI PUCCH to multiplex all CSI reports
+    pucch_logic_channel.retain(|channel| !channel.channel_type.is_csi());
+    pucch_logic_channel.push(PucchLogicChannel {
+        channel_type: PucchChannelType::CsiMulti(all_csi_reports),
+        pucch_resource_id: csi_pucch_id.clone(),
     });
-
-    let resource_idx = pucch_config.multi_csi_resource.as_ref().unwrap();
-    
-
-
-    unimplemented!()
 }
 
 fn select_csi_pucch_proc(
