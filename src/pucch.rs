@@ -370,10 +370,16 @@ struct CsiReport {
 }
 
 #[derive(Debug, PartialEq)]
+struct SrRequest {
+    positive: bool,
+    sr_id: u32,
+}
+
+#[derive(Debug, PartialEq)]
 enum PucchChannelType {
     HarqDci,
     HarqSps,
-    Sr,
+    Sr(SrRequest),
     Csi(CsiReport),
     CsiMulti(Vec<CsiReport>),
     HarqSrMulti,
@@ -383,26 +389,19 @@ enum PucchChannelType {
 }
 
 impl PucchChannelType {
-    fn has_harq(&self) -> bool {
-        match &self {
-            PucchChannelType::HarqDci
-            | PucchChannelType::HarqSps
-            | PucchChannelType::HarqSrMulti
-            | PucchChannelType::HarqCsiMulti
-            | PucchChannelType::HarqCsiSrMulti => true,
-            _ => false,
-        }
-    }
+    check_func!(is_csi, PucchChannelType::Csi { .. });
+    check_func!(is_sr, PucchChannelType::Sr { .. });
+    check_func!(
+        has_harq,
+        PucchChannelType::HarqDci,
+        PucchChannelType::HarqSps,
+        PucchChannelType::HarqSrMulti,
+        PucchChannelType::HarqCsiMulti,
+        PucchChannelType::HarqCsiSrMulti
+    );
 
     fn has_sr(&self) -> bool {
         unimplemented!()
-    }
-
-    fn is_csi(&self) -> bool {
-        match &self {
-            PucchChannelType::Csi { .. } => true,
-            _ => false,
-        }
     }
 
     fn has_csi(&self) -> bool {
@@ -434,7 +433,15 @@ impl PucchLogicChannel {
     }
 }
 
-fn csi_pucch_proc(pucch_config: &PucchConfig, mut pucch_logic_channel: Vec<PucchLogicChannel>) {
+fn pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    // 1. deal with CSI pucch, either multiplex or select, at most 2 csi PUCCH will be remained
+    csi_pucch_proc(pucch_config, pucch_logic_channel);
+
+    // 2. drop all negetive SR which is not overlap with any HARQ/CSI
+    sr_pucch_proc(pucch_config, pucch_logic_channel);
+}
+
+fn csi_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
     let csi_pucch_idx = pucch_logic_channel
         .iter()
         .enumerate()
@@ -447,6 +454,9 @@ fn csi_pucch_proc(pucch_config: &PucchConfig, mut pucch_logic_channel: Vec<Pucch
             Some(mult_csi_resources) => {
                 let csi_pucch = csi_pucch_idx.iter().map(|&i| &pucch_logic_channel[i]);
                 let is_overlap = PucchLogicChannel::is_overlap(pucch_config, csi_pucch);
+                // if multi_csi_resources is configured, and there's overlap between csi PUCCH,
+                // then multiplex all CSI reports on one PUCCH from multi_csi_resources
+                // otherwise, select one or two CSI pucch to transmit
                 if is_overlap {
                     multi_csi_pucch_proc(pucch_config, pucch_logic_channel, csi_pucch_idx);
                 } else {
@@ -460,9 +470,10 @@ fn csi_pucch_proc(pucch_config: &PucchConfig, mut pucch_logic_channel: Vec<Pucch
     }
 }
 
+// multiplex all csi reports on one PUCCH from multi_csi_resources
 fn multi_csi_pucch_proc(
     pucch_config: &PucchConfig,
-    mut pucch_logic_channel: Vec<PucchLogicChannel>,
+    pucch_logic_channel: &mut Vec<PucchLogicChannel>,
     csi_pucch_idx: Vec<usize>,
 ) {
     let all_csi_reports = csi_pucch_idx
@@ -482,7 +493,7 @@ fn multi_csi_pucch_proc(
         .find(|&id| o_csi_all_reports <= id.pucch_resource(pucch_config).max_hold_bits)
         .unwrap_or(last_resource_id);
 
-    // remove all CSI PUCCH, then add a CSI PUCCH to multiplex all CSI reports
+    // drop all CSI PUCCH, then add a CSI PUCCH to multiplex all CSI reports
     pucch_logic_channel.retain(|channel| !channel.channel_type.is_csi());
     pucch_logic_channel.push(PucchLogicChannel {
         channel_type: PucchChannelType::CsiMulti(all_csi_reports),
@@ -490,9 +501,10 @@ fn multi_csi_pucch_proc(
     });
 }
 
+// select one or two CSI pucch to transmit
 fn select_csi_pucch_proc(
     pucch_config: &PucchConfig,
-    mut pucch_logic_channel: Vec<PucchLogicChannel>,
+    pucch_logic_channel: &mut Vec<PucchLogicChannel>,
     csi_channel_idx: Vec<usize>,
 ) {
     // the lower channel priority value, the higher priority
@@ -533,7 +545,7 @@ fn select_csi_pucch_proc(
             }),
     };
 
-    // for CSI, only retain highest/second priority CSI pucch, remove all the others
+    // for CSI, only retain highest/second priority CSI pucch, drop all the others
     match second_csi_channel_idx {
         Some(&second_idx) => pucch_logic_channel.retain(with_index(|idx, channel: &PucchLogicChannel| {
             !channel.channel_type.is_csi() || idx == second_idx || idx == highest_priority_csi_channel_idx
@@ -542,4 +554,23 @@ fn select_csi_pucch_proc(
             !channel.channel_type.is_csi() || idx == highest_priority_csi_channel_idx
         })),
     }
+}
+
+fn sr_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    let sr_pucch_idx = pucch_logic_channel
+        .iter()
+        .enumerate()
+        .filter(|&(i, channel)| channel.channel_type.is_sr())
+        .map(|(i, channel)| i)
+        .collect::<Vec<_>>();
+
+    let mut negtive_sr_pucch_idx = sr_pucch_idx
+        .into_iter()
+        .filter(|&idx| {
+            let sr_pucch = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Sr);
+            !sr_pucch.positive
+        })
+        .collect::<Vec<_>>();
+
+    swap_remove_multiple(pucch_logic_channel, negtive_sr_pucch_idx);
 }

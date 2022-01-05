@@ -20,3 +20,11 @@ where
     let mut i = 0;
     move |item| (f(i, item), i += 1).0
 }
+
+pub fn swap_remove_multiple<T>(vector: &mut Vec<T>, mut idx_to_remove: Vec<usize>) {
+    idx_to_remove.sort();
+    idx_to_remove.reverse();
+    for idx in idx_to_remove {
+        vector.swap_remove(idx);
+    }
+}
