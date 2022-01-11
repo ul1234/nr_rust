@@ -1,10 +1,8 @@
 use crate::constants::*;
-use crate::err::Error;
 use crate::math::*;
 use crate::rrc_pucch::*;
 use core::{fmt, panic};
 use serde_derive::{Deserialize, Serialize};
-use std::cell::RefCell;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PucchConfig {
@@ -391,6 +389,7 @@ enum PucchChannelType {
 impl PucchChannelType {
     check_func!(is_csi, PucchChannelType::Csi { .. });
     check_func!(is_sr, PucchChannelType::Sr { .. });
+    check_func!(is_harq, PucchChannelType::HarqDci, PucchChannelType::HarqSps);
     check_func!(
         has_harq,
         PucchChannelType::HarqDci,
@@ -418,9 +417,9 @@ impl PucchLogicChannel {
         self.pucch_resource_id.pucch_resource(pucch_config)
     }
 
-    fn is_overlap<'a, F>(pucch_config: &'a PucchConfig, pucch_channels: F) -> bool
+    fn is_overlap<'a, T>(pucch_config: &'a PucchConfig, pucch_channels: T) -> bool
     where
-        F: Iterator<Item = &'a PucchLogicChannel>,
+        T: Iterator<Item = &'a PucchLogicChannel>,
     {
         pucch_channels
             .scan(0u32, |accum_bitmap, channel| {
@@ -434,20 +433,24 @@ impl PucchLogicChannel {
 }
 
 fn pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
-    // 1. deal with CSI pucch, either multiplex or select, at most 2 csi PUCCH will be remained
+    // 1. if DCI harq exist, remove the sps harq
+
+    // 2. deal with CSI pucch, either multiplex or select, at most 2 csi PUCCH will be remained
     csi_pucch_proc(pucch_config, pucch_logic_channel);
 
-    // 2. drop all negetive SR which is not overlap with any HARQ/CSI
+    // 3. if simultaneousHARQ-ACK-CSI not configured
+    // 1) drop any CSI overlapped with HARQ-ACK
+    // 2) if HARQ-ACK PUCCH is long PUCCH, drop all non-overlapped CSI with long PUCCH
+    harq_csi_simul_proc(pucch_config, pucch_logic_channel);
+
+    // 4. drop all negetive SR which is not overlap with any HARQ/CSI
     sr_pucch_proc(pucch_config, pucch_logic_channel);
+
+    // 5. Q set process
 }
 
 fn csi_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
-    let csi_pucch_idx = pucch_logic_channel
-        .iter()
-        .enumerate()
-        .filter(|&(i, channel)| channel.channel_type.is_csi())
-        .map(|(i, channel)| i)
-        .collect::<Vec<_>>();
+    let csi_pucch_idx = filter_index(pucch_logic_channel, |channel| channel.channel_type.is_csi());
 
     if csi_pucch_idx.len() > 1 {
         match &pucch_config.multi_csi_resource {
@@ -478,7 +481,7 @@ fn multi_csi_pucch_proc(
 ) {
     let all_csi_reports = csi_pucch_idx
         .iter()
-        .map(|&idx| enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi))
+        .map(|&idx| into_variant!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -511,7 +514,7 @@ fn select_csi_pucch_proc(
     let highest_priority_csi_channel_idx = *csi_channel_idx
         .iter()
         .min_by_key(|&&idx| {
-            let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+            let csi_report = into_variant!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
             csi_report.priority
         })
         .unwrap();
@@ -530,7 +533,7 @@ fn select_csi_pucch_proc(
                     && !resource.is_overlap(highest_pucch_resource)
             })
             .min_by_key(|&&idx| {
-                let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+                let csi_report = into_variant!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
                 csi_report.priority
             }),
         PucchFormatType::ShortPucch => csi_channel_idx
@@ -540,7 +543,7 @@ fn select_csi_pucch_proc(
                 (idx != highest_priority_csi_channel_idx) && !resource.is_overlap(highest_pucch_resource)
             })
             .min_by_key(|&&idx| {
-                let csi_report = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
+                let csi_report = into_variant!(pucch_logic_channel[idx].channel_type, PucchChannelType::Csi);
                 csi_report.priority
             }),
     };
@@ -556,21 +559,11 @@ fn select_csi_pucch_proc(
     }
 }
 
-fn sr_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
-    let sr_pucch_idx = pucch_logic_channel
-        .iter()
-        .enumerate()
-        .filter(|&(i, channel)| channel.channel_type.is_sr())
-        .map(|(i, channel)| i)
-        .collect::<Vec<_>>();
-
-    let mut negtive_sr_pucch_idx = sr_pucch_idx
-        .into_iter()
-        .filter(|&idx| {
-            let sr_pucch = enum_content!(pucch_logic_channel[idx].channel_type, PucchChannelType::Sr);
-            !sr_pucch.positive
-        })
-        .collect::<Vec<_>>();
-
-    swap_remove_multiple(pucch_logic_channel, negtive_sr_pucch_idx);
+// drop all negetive SR which is not overlap with any HARQ/CSI
+fn sr_pucch_proc(_pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    swap_remove_filter(pucch_logic_channel, |channel| {
+        as_variant!(channel.channel_type, PucchChannelType::Sr).and_then(|sr| Some(!sr.positive)).unwrap_or(false)
+    });
 }
+
+fn harq_csi_simul_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {}

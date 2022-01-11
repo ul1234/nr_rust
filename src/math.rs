@@ -28,3 +28,18 @@ pub fn swap_remove_multiple<T>(vector: &mut Vec<T>, mut idx_to_remove: Vec<usize
         vector.swap_remove(idx);
     }
 }
+
+pub fn filter_index<T, F>(vector: &mut Vec<T>, mut predicate: F) -> Vec<usize>
+where
+    F: FnMut(&T) -> bool,
+{
+    vector.iter().enumerate().filter(|&(_i, item)| predicate(item)).map(|(i, _item)| i).collect::<Vec<_>>()
+}
+
+pub fn swap_remove_filter<T, F>(vector: &mut Vec<T>, mut predicate: F)
+where
+    F: FnMut(&T) -> bool,
+{
+    let mut index = vector.iter().enumerate().filter(|&(_i, item)| predicate(item)).map(|(i, _item)| i).collect::<Vec<_>>();
+    swap_remove_multiple(vector, index);
+}
