@@ -7,7 +7,7 @@ mod optional;
 mod pucch;
 mod read_config;
 mod rrc_pucch;
-use pucch::PucchConfig;
+use pucch::*;
 use rrc_pucch::PucchConfigR;
 
 use crate::read_config::load_config;
@@ -47,4 +47,14 @@ fn main() {
     // let pucch_resource_set = pucch_config.pucch_resource_set(11);
 
     // println!("{:?}", pucch_resource_set);
+
+    let csi_report = CsiReport {priority: 1, o_csi: 20, o_csi_1: 20, o_csi_2: None};
+
+    let mut channels = vec![
+        PucchLogicChannel::new(PucchChannelType::HarqDci, PucchResourceId::new(&pucch_config, 1)),
+        PucchLogicChannel::new(PucchChannelType::Sr(SrRequest{positive: true, sr_id: 1}), PucchResourceId::new(&pucch_config, 0)),
+        PucchLogicChannel::new(PucchChannelType::Csi(csi_report), PucchResourceId::new(&pucch_config, 2)),
+    ];
+
+    pucch_proc(&pucch_config, &mut channels);
 }

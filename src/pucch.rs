@@ -30,7 +30,7 @@ struct PucchResourceSet {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PucchResourceId {
+pub struct PucchResourceId {
     id: u32,
     idx: usize, // to optimize the retrieve of pucch resource
 }
@@ -167,6 +167,10 @@ impl From<PucchConfigR> for PucchConfig {
 
 /*************** impl config time ***************************/
 impl PucchResourceId {
+    pub fn new(pucch_config: &PucchConfig, resource_id: u32) -> Self {
+        Self {id: resource_id, idx: PucchResourceId::pucch_resource_idx_cfg(&pucch_config.pucch_resource, resource_id)}
+    }
+
     fn from_pucch_resource_id(pucch_resource: &[PucchResource], resource_id: u32) -> PucchResourceId {
         PucchResourceId { id: resource_id, idx: PucchResourceId::pucch_resource_idx_cfg(pucch_resource, resource_id) }
     }
@@ -351,30 +355,38 @@ impl PucchResource {
             _ => PucchFormatType::LongPucch,
         }
     }
+
+    // the smaller, the higher priority
+    fn q_set_priority(&self) -> u32 {
+        let (start_sym, num_sym) = self.occupied_sym();
+        // the smaller start_sym, the higher priority
+        // if start_sym is the same, the large num_sym, the higher priority
+        (start_sym + 1) * NUM_SYM_PER_SLOT - num_sym
+    }
 }
 
-#[derive(Debug)]
-struct PucchLogicChannel {
+#[derive(Debug, Clone)]
+pub struct PucchLogicChannel {
     channel_type: PucchChannelType,
     pucch_resource_id: PucchResourceId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct CsiReport {
-    priority: u32,
-    o_csi: u32, // csi payload size
-    o_csi_1: u32,
-    o_csi_2: Option<u32>,
+pub struct CsiReport {
+    pub priority: u32,
+    pub o_csi: u32, // csi payload size
+    pub o_csi_1: u32,
+    pub o_csi_2: Option<u32>,
 }
 
-#[derive(Debug, PartialEq)]
-struct SrRequest {
-    positive: bool,
-    sr_id: u32,
+#[derive(Debug, PartialEq, Clone)]
+pub struct SrRequest {
+    pub positive: bool,
+    pub sr_id: u32,
 }
 
-#[derive(Debug, PartialEq)]
-enum PucchChannelType {
+#[derive(Debug, PartialEq, Clone)]
+pub enum PucchChannelType {
     HarqDci,
     HarqSps,
     Sr(SrRequest),
@@ -390,6 +402,9 @@ impl PucchChannelType {
     check_func!(is_csi, PucchChannelType::Csi { .. });
     check_func!(is_sr, PucchChannelType::Sr { .. });
     check_func!(is_harq, PucchChannelType::HarqDci, PucchChannelType::HarqSps);
+    check_func!(is_dci_harq, PucchChannelType::HarqDci);
+    check_func!(is_sps_harq, PucchChannelType::HarqSps);
+    check_func!(is_csi_or_harq, PucchChannelType::HarqDci, PucchChannelType::HarqSps, PucchChannelType::Csi { .. });
     check_func!(
         has_harq,
         PucchChannelType::HarqDci,
@@ -413,11 +428,18 @@ impl PucchChannelType {
 }
 
 impl PucchLogicChannel {
+    pub fn new(channel_type: PucchChannelType, pucch_resource_id: PucchResourceId) -> Self {
+        Self {
+            channel_type,
+            pucch_resource_id,
+        }
+    }
+
     fn pucch_resource<'a>(&'a self, pucch_config: &'a PucchConfig) -> &'a PucchResource {
         self.pucch_resource_id.pucch_resource(pucch_config)
     }
 
-    fn is_overlap<'a, T>(pucch_config: &'a PucchConfig, pucch_channels: T) -> bool
+    fn is_overlap_among_channels<'a, T>(pucch_config: &'a PucchConfig, pucch_channels: T) -> bool
     where
         T: Iterator<Item = &'a PucchLogicChannel>,
     {
@@ -430,10 +452,23 @@ impl PucchLogicChannel {
             })
             .any(|is_overlap| is_overlap)
     }
+
+    fn is_overlap<'a, T>(&'a self, pucch_config: &'a PucchConfig, pucch_channels: T) -> bool
+    where
+        T: Iterator<Item = &'a PucchLogicChannel>,
+    {
+        let pucch_channels_bitmap = pucch_channels.fold(0u32, |accum_bitmap, channel| {
+            let pucch_bitmap = channel.pucch_resource(pucch_config).sym_bitmap();
+            accum_bitmap | pucch_bitmap
+        });
+
+        (self.pucch_resource(pucch_config).sym_bitmap() & pucch_channels_bitmap) != 0
+    }
 }
 
-fn pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+pub fn pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
     // 1. if DCI harq exist, remove the sps harq
+    dci_harq_pucch_proc(pucch_config, pucch_logic_channel);
 
     // 2. deal with CSI pucch, either multiplex or select, at most 2 csi PUCCH will be remained
     csi_pucch_proc(pucch_config, pucch_logic_channel);
@@ -447,6 +482,14 @@ fn pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLog
     sr_pucch_proc(pucch_config, pucch_logic_channel);
 
     // 5. Q set process
+    q_set_proc(pucch_config, pucch_logic_channel);
+}
+
+fn dci_harq_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    let dci_harq_exist = pucch_logic_channel.iter().find(|&channel| channel.channel_type.is_dci_harq()).is_some();
+    if dci_harq_exist {
+        swap_remove_filter(pucch_logic_channel, |channel| channel.channel_type.is_sps_harq());
+    }
 }
 
 fn csi_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
@@ -456,7 +499,7 @@ fn csi_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<Pucc
         match &pucch_config.multi_csi_resource {
             Some(mult_csi_resources) => {
                 let csi_pucch = csi_pucch_idx.iter().map(|&i| &pucch_logic_channel[i]);
-                let is_overlap = PucchLogicChannel::is_overlap(pucch_config, csi_pucch);
+                let is_overlap = PucchLogicChannel::is_overlap_among_channels(pucch_config, csi_pucch);
                 // if multi_csi_resources is configured, and there's overlap between csi PUCCH,
                 // then multiplex all CSI reports on one PUCCH from multi_csi_resources
                 // otherwise, select one or two CSI pucch to transmit
@@ -560,10 +603,34 @@ fn select_csi_pucch_proc(
 }
 
 // drop all negetive SR which is not overlap with any HARQ/CSI
-fn sr_pucch_proc(_pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+fn sr_pucch_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    let csi_or_harq_channels = pucch_logic_channel.iter().filter(|&channel| channel.channel_type.is_csi_or_harq()).cloned().collect::<Vec<_>>();
+
     swap_remove_filter(pucch_logic_channel, |channel| {
-        as_variant!(channel.channel_type, PucchChannelType::Sr).and_then(|sr| Some(!sr.positive)).unwrap_or(false)
+        as_variant!(channel.channel_type, PucchChannelType::Sr)
+            .and_then(|sr| Some(!sr.positive))
+            .unwrap_or_else(|| {
+                let harq_csi_channels = csi_or_harq_channels.iter().filter(|&channel| channel.channel_type.is_csi_or_harq());
+                channel.is_overlap(pucch_config, harq_csi_channels)
+            })
     });
 }
 
 fn harq_csi_simul_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {}
+
+fn q_set_proc(pucch_config: &PucchConfig, pucch_logic_channel: &mut Vec<PucchLogicChannel>) {
+    pucch_logic_channel.sort_by_key(|channel| channel.pucch_resource(pucch_config).q_set_priority());
+
+    println!("after sort: {:?}", pucch_logic_channel);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug() {
+        println!("test");
+    }
+}

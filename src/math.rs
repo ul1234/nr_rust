@@ -40,6 +40,6 @@ pub fn swap_remove_filter<T, F>(vector: &mut Vec<T>, mut predicate: F)
 where
     F: FnMut(&T) -> bool,
 {
-    let mut index = vector.iter().enumerate().filter(|&(_i, item)| predicate(item)).map(|(i, _item)| i).collect::<Vec<_>>();
+    let index = vector.iter().enumerate().filter(|&(_i, item)| predicate(item)).map(|(i, _item)| i).collect::<Vec<_>>();
     swap_remove_multiple(vector, index);
 }
